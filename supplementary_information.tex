@@ -1,0 +1,98 @@
+% SI — PhysBench
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{booktabs}
+\usepackage{amsmath,amssymb}
+\usepackage{hyperref}
+\usepackage{microtype}
+\usepackage{enumitem}
+\setlength{\parskip}{0.4em}
+\linespread{1.12}
+
+\title{\bfseries Supplementary Information\\
+PhysBench: a verifiable multi-domain benchmark for physics-informed learning}
+\author{Sehaj Randhir Singh \\ \small Correspondence: sehajrsinghs@gmail.com}
+\date{}
+\begin{document}
+\maketitle
+
+\section*{SI 1. Parameter ranges}
+\label{si:ranges}
+
+Table~\ref{tab:ranges} lists the full parameter ranges and the deterministic
+seeding protocol for each domain.
+
+\begin{table}[h]
+\centering
+\caption{PhysBench parameter ranges.}
+\label{tab:ranges}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Domain & Parameters (range) \\
+\midrule
+beam & $L\in[1,6]$, $P\in[10^3,5\times10^4]$, $E\in[69,210]$\,GPa, $I\in[10^{-7},2\times10^{-5}]$, $h\in[0.05,0.4]$ \\
+cantilever & identical ranges to beam (identical token stream) \\
+projectile & $v_0\in[5,30]$\,m/s, $\alpha\in[15^\circ,75^\circ]$ \\
+pendulum & $L\in[0.5,3]$, $\theta_0\in[5^\circ,60^\circ]$ \\
+spring & $k\in[1,50]$, $m\in[0.1,5]$, $A\in[0.2,2]$ \\
+rc & $R\in[100,10^4]$, $C\in[10^{-6},10^{-3}]$, $V_0\in[1,12]$ \\
+burgers & $\nu\in[0.02,0.1]$, $A\in[0.8,1.8]$, $\sigma\in[0.25,0.45]$ \\
+heat2d & mode numbers $k,l\in\{1,2,3\}$, amplitudes $\in[0.5,2]$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section*{SI 2. Solver and verifier independence}
+\label{si:verifiers}
+
+For the trajectory domains, the generator is the exact closed-form solution
+(\texttt{physx/sim.py}) and the verifier is a finite-difference
+discretization of the governing equation (\texttt{physx/residuals.py}): e.g.\
+for the beam, the generator evaluates the closed-form deflection
+$w(x) = Px(4x^2-3L^2)/(48EI)$ (piecewise), while the verifier checks the
+fourth-derivative equilibrium $EI\,w'''' = -q$ numerically on the predicted
+curve. The two code paths share no implementation. For Burgers, the generator
+is a high-resolution upwind scheme; the verifier evaluates
+$u_t + uu_x - \nu u_{xx}$ by central differences on the predicted grid. For
+heat2d, the generator sums the separable-mode solution; the verifier evaluates
+$\nabla^2 u - f$ on the predicted grid.
+
+\section*{SI 3. The baseline matrix, per-seed}
+\label{si:matrix}
+
+The full 75-run matrix (per-seed training rel-MAE) is committed under
+\texttt{physx/models/matrix/}. Table~\ref{tab:seeds} summarizes means and
+standard deviations per cell.
+
+\begin{table}[h]
+\centering
+\caption{Baseline matrix (mean $\pm$ std over 5 seeds).}
+\label{tab:seeds}
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Domain & phys & no-physics & MLP \\
+\midrule
+beam & $0.118\pm0.029$ & $0.153\pm0.048$ & $0.133\pm0.037$ \\
+cantilever & $0.120\pm0.027$ & $0.150\pm0.030$ & $0.134\pm0.030$ \\
+burgers & $0.008\pm0.001$ & $0.010\pm0.002$ & $0.016\pm0.003$ \\
+heat2d & $0.014\pm0.007$ & $0.013\pm0.003$ & $0.020\pm0.007$ \\
+projectile & $0.100\pm0.031$ & $0.057\pm0.030$ & $0.068\pm0.025$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section*{SI 4. Reproducibility}
+\label{si:repro}
+
+\begin{verbatim}
+python3 -c "from physx import dataset; print(len(dataset.generate('beam', n=256, seed=0)))"
+python3 physx/run_matrix.py        # rerun the 75-run baseline matrix
+python3 -m unittest physx.test_physx   # 49 tests, incl. dataset/verifier tests
+\end{verbatim}
+
+Reproducing the matrix takes under an hour on a 20-core CPU; data generation
+is instantaneous and deterministic.
+
+\end{document}

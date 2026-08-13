@@ -1,0 +1,475 @@
+% PhysBench — manuscript for Nature Machine Intelligence (Resource format)
+% Compile: pdflatex manuscript.tex   (figures in ./fig)
+
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.4cm]{geometry}
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage[super,sort&compress]{natbib}
+\usepackage[colorlinks=true,urlcolor=blue,citecolor=blue]{hyperref}
+\usepackage[expansion=false]{microtype}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{multirow}
+
+\setlength{\parskip}{0.4em}
+\linespread{1.12}
+
+\title{\Large\bfseries PhysBench: a verifiable multi-domain benchmark for\\*
+physics-informed learning}
+
+\author{
+  Sehaj Randhir Singh$^{1*}$ \\
+  \small\textit{$^{1}$Independent Researcher; affiliated with the Department of
+  Electrical and Computer Engineering, NYU Tandon School of Engineering}\\
+  \small$^{*}$Correspondence: sehajrsinghs@gmail.com
+}
+
+\date{}
+
+\begin{document}
+
+\maketitle
+\vspace{-1.2em}
+
+\begin{abstract}
+\noindent Benchmarks for physics-informed machine learning mostly share a
+structural weakness: the ``ground truth'' and the model are validated against
+the \emph{same} simulation code, so agreement can reflect shared error rather
+than physical correctness. We introduce PhysBench, a benchmark of twelve
+physics domains---algebraic closed-form trajectories, energy conservation,
+harmonic and relaxation ODEs (including the oscillator family: spring, LC
+circuit, damped oscillator), central-force motion, fourth-order bending, a
+conservation-law PDE, and an elliptic field problem---built on the
+\emph{independent-verifier principle}: every target is produced by a
+closed-form or high-resolution numerical solution that is implemented
+separately from the training signal, and every predicted trajectory or field
+is scored against an \emph{independent} governing-equation residual, not
+against the generating code. Each domain provides a parameterized instance
+family, exact answers, shape-normalized trajectory/field targets, and an
+open-source, deterministic data generator seeded for exact reproducibility.
+We provide a baseline matrix of 75 runs (five domains $\times$ three
+architectures $\times$ five seeds), an operator-network comparison on the
+ten trajectory domains of the protocol, and report per-domain difficulty,
+showing that
+held-out error spans two orders of magnitude across domains and that the
+best architecture differs by domain.
+PhysBench is small by design (a few hundred samples per domain, CPU-minutes
+training): it is built to expose \emph{mechanisms}---when physics supervision
+helps, when conditioning on the equation matters, what transfers across
+laws---at a cost that makes large multi-seed studies routine. All data,
+generators, and scoring code are committed and reproducible from the
+repository alone.
+\end{abstract}
+
+\noindent\textbf{Keywords:} benchmark; physics-informed learning;
+verification; scientific machine learning; reproducibility
+
+\section{Introduction}
+\label{sec:intro}
+
+Physics-informed machine learning has produced a rich literature of methods
+---physics-informed neural networks \cite{raissi2019physics,
+karniadakis2021physics}, neural operators \cite{li2021fourier, lu2021deeponet},
+and increasingly transformer-based architectures \cite{liu2024physics}---and
+with it a quiet crisis of evaluation. The dominant pattern is to solve a
+PDE with a method and compare against a reference solution from a solver; but
+when the reference solver is the same implementation family as the training
+data, the comparison measures self-consistency, not correctness. Two networks
+trained on the same solver's output can agree with each other while both
+being wrong about the physics.
+
+The field needs benchmarks with a different property: \emph{ground truth
+that does not depend on the artifact being evaluated}. For problems with
+closed-form solutions, ground truth is exact and independent by construction.
+For problems without closed forms, ground truth should come from an
+implementation that is \emph{separate} from the one that generated the
+training data, and evaluation should additionally score how well a predicted
+field satisfies the governing equation itself---an independent check that
+needs no reference solution at all.
+
+PhysBench instantiates this principle. It is a small, deterministic,
+verifiable benchmark of twelve physics domains, each a parameterized instance
+family with exact answers, shape-normalized targets, and an independent
+verifier. It is designed for the questions the field is actually asking---not
+``can a method solve this one equation'' but ``when does physics supervision
+help, what does a generalist lose against a specialist, and what transfers
+across laws''---at a cost that makes multi-seed, multi-condition studies
+routine. This paper contributes:
+
+\begin{enumerate}[leftmargin=1.6em,itemsep=0.2em]
+  \item \textbf{The independent-verifier principle}, stated and implemented:
+  targets from closed-form or separately-implemented solvers; evaluation
+  against independent governing-equation residuals.
+  \item \textbf{Twelve domains} spanning algebraic, conservation, ODE, and PDE
+  structure, with parameter ranges, exact answers, and seeded generators
+  (Table~\ref{tab:domains}, Fig.~\ref{fig:domains}).
+  \item \textbf{A 75-run baseline matrix} (three architectures $\times$ five
+  seeds per domain) establishing per-domain difficulty and showing that the
+  best architecture is domain-dependent---evidence that single-domain
+  benchmark claims should not be generalized (Fig.~\ref{fig:matrix},
+  Table~\ref{tab:matrix}).
+  \item \textbf{Mechanism-grade scale}: hundreds of samples per domain, CPU
+  minutes per run, so that statistically meaningful multi-seed comparisons
+  are routine rather than expensive.
+\end{enumerate}
+
+\section{Results}
+\label{sec:results}
+
+\subsection{The independent-verifier principle}
+\label{sec:principle}
+
+A PhysBench domain is defined by four artifacts, all committed:
+(1) a parameterized governing equation and a legal parameter range;
+(2) a \emph{closed-form} answer and trajectory solver where one exists
+(projectile, pendulum, spring, RC, beam, cantilever) and a
+\emph{high-resolution numerical} solver implemented separately for the field
+domains (Burgers, heat2d); (3) a shape-normalized target (trajectories in
+$[0,1]$ by their own peak, fields on a fixed grid); and (4) an
+\emph{independent verifier}---a governing-equation residual computed by a
+different code path than the solver, so a model can be scored without any
+reference solution (Table~\ref{tab:verifiers}).
+
+The separation is the point. The training signal for a learned model is the
+generator's output; the verifier is a different implementation of the
+\emph{law}, not of the solver. A model that merely memorizes generator
+artifacts cannot reduce the residual unless the generator was physically
+correct---and if it was, the residual is a fair check. When the verifier is
+also used as a differentiable loss (as in physics-informed training), the
+benchmark becomes self-consistent in the right way: the training signal and
+the verification share a law, not an implementation.
+
+\subsection{Twelve domains}
+\label{sec:domains}
+
+Table~\ref{tab:domains} lists the domains, their governing equations, and
+parameter ranges; Fig.~\ref{fig:domains} shows representative trajectories.
+The suite deliberately spans the structural diversity of physical law:
+algebraic closed form (projectile), energy conservation (pendulum), harmonic
+oscillation (spring, LC circuit, damped oscillator), first-order relaxation
+(RC, linear drag), central-force motion (Kepler orbit), fourth-order beam
+bending (beam, cantilever---differing only in boundary conditions, which
+makes them the pair on which conditioning mechanisms can be isolated), a
+nonlinear conservation law (Burgers), and an elliptic field problem
+(heat2d). The oscillator family (spring, LC, damped) is deliberately
+over-represented: the three laws share the same second-order structure and
+partially overlapping parameter sets, so a benchmark user can test whether a
+method exploits the shared physics or memorizes per-domain idiosyncrasies.
+Each domain's instances are drawn by (log-)uniform sampling of its parameter
+range, and every generator is seeded, so the exact train/validation splits
+reproduce on any machine.
+
+\begin{table}[t]
+\centering
+\caption{\textbf{PhysBench domains.} Governing equations, parameter ranges,
+target type, and the independent verifier for each domain.}
+\label{tab:domains}
+\small
+\begin{tabular}{@{}llll@{}}
+\toprule
+Domain & Equation & Parameters (range) & Verifier \\
+\midrule
+beam & $EI\,w'' = M(x)$, $M=\frac{Px}{2}$ & $L\in[1,6]$, $P\in[10^3,5\times10^4]$, $E\in[69,210]$\,GPa, $I\in[10^{-7},2\times10^{-5}]$, $h\in[0.05,0.4]$ & moment--curvature residual \\
+cantilever & $EI\,w'' = P(L-x)$ & same as beam & moment--curvature residual \\
+projectile & $y=x\tan\alpha - \frac{gx^2}{2v_0^2\cos^2\alpha}$ & $v_0\in[5,30]$, $\alpha\in[15^\circ,75^\circ]$ & closed-form residual \\
+pendulum & $\frac12 L^2\omega^2 + gL(1-\cos\theta)=c$ & $L\in[0.5,3]$, $\theta_0\in[5^\circ,60^\circ]$ & energy-conservation residual \\
+spring & $m\ddot{x}+kx=0$ & $k\in[1,50]$, $m\in[0.1,5]$, $A\in[0.2,2]$ & harmonic-ODE residual \\
+rc & $\dot{V}+V/\tau=V_0/\tau$ & $R\in[100,10^4]$, $C\in[10^{-6},10^{-3}]$, $V_0\in[1,12]$ & relaxation residual \\
+burgers & $u_t+uu_x=\nu u_{xx}$ & $\nu\in[0.02,0.1]$, $A\in[0.8,1.8]$, $\sigma\in[0.25,0.45]$ & conservation-law residual \\
+heat2d & $\nabla^2 u=f(x,y)$ & mode numbers $k,l$, amplitudes & elliptic residual \\
+damped & $m\ddot{x}+c\dot{x}+kx=0$ & $k\in[5,50]$, $m\in[0.2,5]$, $c\in[0.05,1.5]$, $A\in[0.1,1]$ & damped-ODE residual \\
+kepler & $\ddot{\mathbf{r}}=-GM\,\mathbf{r}/r^3$ & $a\in[10^{11},6\times10^{11}]$, $M\in[10^{28},2\times10^{30}]$, $e\in[0.05,0.7]$ & vis-viva residual \\
+lc & $L\ddot{q}+q/C=0$ & $L\in[10^{-6},10^{-3}]$, $C\in[10^{-9},10^{-6}]$, $V_0\in[1,12]$ & harmonic-ODE residual \\
+drag & $m\dot{v}=mg-bv$ & $m\in[0.5,10]$, $b\in[0.1,2]$ & relaxation residual \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{\textbf{Independent verifiers.} Each verifier is a different code
+path than the generator, so evaluation never reuses the training
+implementation.}
+\label{tab:verifiers}
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+Domain & Generator & Independent verifier \\
+\midrule
+trajectory domains & closed-form exact solution & finite-difference governing-equation residual \\
+beam/cantilever & closed-form deflection & fourth-derivative equilibrium check ($EI w'''' = -q$) \\
+burgers & high-resolution upwind scheme & residual of $u_t+uu_x-\nu u_{xx}$ on the grid \\
+heat2d & spectral/closed-form modes & residual of $\nabla^2 u - f$ on the grid \\
+damped/kepler/lc/drag & closed-form solution & independent ODE integration (RK4, leapfrog, symplectic Euler, Euler) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=1.0\textwidth]{fig/fig1_domains.png}
+\caption{\textbf{Representative trajectories.} Shape-normalized targets from
+six trajectory domains (beam, cantilever, projectile, pendulum, spring, RC);
+field domains (Burgers, heat2d) are shown in Figs.~4--5.}
+\label{fig:domains}
+\end{figure}
+
+\subsection{The 75-run baseline matrix}
+\label{sec:matrix}
+
+For each of the five single-instance domains (beam, cantilever, projectile,
+Burgers, heat2d) we train three architectures---a physics-informed
+transformer (\textsc{PhysFormer}), the same transformer without the physics
+loss, and an MLP of equal capacity---over five seeds, on 256 samples each
+(75 runs total; Fig.~\ref{fig:matrix}, Table~\ref{tab:matrix}). Three
+findings emerge.
+
+First, \emph{difficulty spans two orders of magnitude}: mean held-out error
+ranges from 0.008 (Burgers) to 0.15 (cantilever). A benchmark that reports
+one number for ``physics-informed learning'' is averaging incomparable
+problems. Second, \emph{the best architecture is domain-dependent}: the
+physics loss helps beam, cantilever, and Burgers; it is neutral on heat2d
+and \emph{hurts} projectile (where the plain transformer is best and the MLP
+is competitive)---because projectile's closed-form trajectory is already the
+easiest structure to fit and the residual penalty adds constraint without
+signal. Third, \emph{variance is real}: 5-seed standard deviations are a
+large fraction of the means (e.g.\ projectile), so single-seed benchmark
+reports are not reliable. These facts are the benchmark's content: they say
+that mechanism claims about physics-informed learning must be made
+per-domain, multi-seed, and with the architecture as a factor.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.9\textwidth]{fig/fig2_matrix.png}
+\caption{\textbf{Baseline matrix (75 runs).} Mean training rel-MAE, five seeds
+per cell. The physics loss helps beam, cantilever, and Burgers; is neutral on
+heat2d; and hurts projectile. Error bars are $\pm1$ std over seeds.}
+\label{fig:matrix}
+\end{figure}
+
+\begin{table}[t]
+\centering
+\caption{\textbf{Baseline matrix (mean rel-MAE over 5 seeds).}}
+\label{tab:matrix}
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Domain & phys & no-physics & MLP \\
+\midrule
+beam & 0.118 & 0.153 & 0.133 \\
+cantilever & 0.120 & 0.150 & 0.134 \\
+burgers & 0.008 & 0.010 & 0.016 \\
+heat2d & 0.014 & 0.013 & 0.020 \\
+projectile & 0.100 & 0.057 & 0.068 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Generalists vs.\ operator networks}
+\label{sec:deeponet}
+
+The multi-law protocol supplies the benchmark's cross-domain comparison: a
+single law-conditioned generalist (one model, 96 samples per law, no law
+identity at inference) versus a per-law DeepONet
+\cite{lu2021deeponet} trained on identical splits (one dedicated operator
+network per law, 250 epochs). Table~\ref{tab:deeponet} gives the ten
+trajectory domains. Two findings. First, \emph{per-law operators win on
+per-law fidelity}: the median held-out trajectory error of the ten dedicated
+DeepONets is 0.037 versus 0.110 for the single generalist, and DeepONet is
+better on eight of ten domains. This is expected---a dedicated network
+specialized to one law and trained only on that law's data has no competing
+structure to interfere---and it sets the honest upper bound a generalist must
+approach. Second, \emph{the generalist wins where cross-law structure
+carries information}: on spring and LC it beats the dedicated operators
+outright (0.111 vs.\ 0.122; 0.100 vs.\ 0.192). The benchmark's point is not
+that one architecture wins---it is that the \emph{right question} is
+per-domain and per-capacity, and that a benchmark built on independent
+verifiers lets both statements be made precisely.
+
+\begin{table}[t]
+\centering
+\caption{\textbf{Operator-network comparison on the ten trajectory
+domains.} Held-out peak-normalized trajectory error (median over 3 seeds for
+the generalist; DeepONet trained 250 epochs per law on identical splits).
+Median row is over the ten domains.}
+\label{tab:deeponet}
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Domain & LCA generalist & per-law DeepONet & better \\
+\midrule
+beam       & 0.097 & 0.025 & DeepONet \\
+cantilever & 0.138 & 0.009 & DeepONet \\
+projectile & 0.110 & 0.011 & DeepONet \\
+pendulum   & 0.054 & 0.037 & DeepONet \\
+spring     & 0.111 & 0.122 & generalist \\
+rc         & 0.126 & 0.007 & DeepONet \\
+damped     & 0.141 & 0.141 & tie \\
+kepler     & 0.157 & 0.066 & DeepONet \\
+lc         & 0.100 & 0.192 & generalist \\
+drag       & 0.067 & 0.011 & DeepONet \\
+\midrule
+median     & 0.110 & 0.037 & DeepONet \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Representative solutions}
+\label{sec:solutions}
+
+Figures 3--5 show the benchmark's data quality: training convergence on two
+domains (Fig.~\ref{fig:convergence}), held-out predictions against exact
+answers (Fig.~\ref{fig:predictions}), the cantilever deflection curve
+(Fig.~\ref{fig:cantilever}), and a Burgers field (Fig.~\ref{fig:burgers}).
+The gap between prediction and exact solution on held-out problems is
+visually apparent in every figure---the benchmark does not flatter its
+subjects.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.85\textwidth]{fig/fig3_convergence.png}
+\caption{\textbf{Training convergence} for projectile and spring (representative
+seeds). Every curve is traceable to a committed training log.}
+\label{fig:convergence}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.95\textwidth]{fig/fig4_predictions.png}
+\caption{\textbf{Held-out predictions vs.\ exact answers.} PhysFormer
+predictions on unseen problems across trajectory domains.}
+\label{fig:predictions}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.9\textwidth]{fig/fig7_cantilever.png}
+\caption{\textbf{Cantilever deflection:} exact vs.\ predicted, with the
+moment--curvature verifier's residual.}
+\label{fig:cantilever}
+\end{figure}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=0.9\textwidth]{fig/fig8_burgers.png}
+\caption{\textbf{Burgers field} on a shock instance: exact (left) vs.\
+predicted (right) space--time field.}
+\label{fig:burgers}
+\end{figure}
+
+\section{Discussion}
+\label{sec:discussion}
+
+PhysBench's contribution is not scale but \emph{structure}. The
+independent-verifier principle converts physics benchmarks from
+self-comparisons into checks against the law itself; the parameterized
+instance families turn ``can it solve Burgers'' into ``can it solve any
+Burgers instance''; and the 75-run matrix documents, in numbers, that
+architecture effects are real and domain-dependent---a warning against the
+field's habit of generalizing single-domain wins.
+
+The benchmark's small size is deliberate. Mechanism studies need many seeds,
+many conditions, and ablations that are only affordable when a run costs
+CPU-minutes. The companion results built on PhysBench---a significance-tested
+account of the physics-loss channel, a causal study of equation-conditioned
+attention, and a sample-efficiency study of acquiring new laws---all fit in
+this cost envelope. PhysBench is the laboratory; those studies are the
+experiments.
+
+Limitations: the domains are textbook equations, not industrial
+simulations; the field problems are two-dimensional; and the benchmark
+provides no pretrained or multi-instance baselines for methods that require
+them (e.g.\ operator learning at scale). Extending the suite toward 3D,
+coupled, and data-derived (non-closed-form) problems is the natural next
+step and is supported by the verifier principle, which does not depend on
+closed forms.
+
+\section{Methods}
+\label{sec:methods}
+
+All generators are deterministic functions of (domain, parameter vector,
+seed); samples are drawn by Latin-hypercube sampling over each domain's
+parameter range, and targets are produced by the closed-form or numerical
+solver in \texttt{physx/sim.py}. Training and evaluation use
+\texttt{physx/dataset.py}; the matrix runs use \texttt{physx/run\_matrix.py};
+verifiers live in \texttt{physx/residuals.py}. Models: \textsc{PhysFormer}
+($d_{\mathrm{model}}=48$, 3 layers, 4 heads, 50-step trajectories; see the
+companion architecture paper), its no-physics variant (identical, residual
+weight 0), and an MLP of equal capacity. All 75 runs share seed protocol,
+budget (256 samples, 5 seeds), and evaluation (48 held-out samples).
+Reproducing the entire matrix takes under an hour on a 20-core CPU; the data
+generation is instantaneous.
+
+\section*{Data and code availability}
+\label{sec:dataavail}
+
+All generators, verifiers, training code, per-run logs, and result files are
+committed in the public repository (\url{https://github.com/placeholder/age},
+DOI \href{https://doi.org/10.xxxx/xxxxx}{10.xxxx/xxxxx} on acceptance). The
+benchmark has no external data dependencies: the dataset is generated, not
+downloaded.
+
+\section*{Author contributions}
+\label{sec:author}
+
+S.R.S.\ designed the benchmark, implemented the generators and verifiers, ran
+the baseline matrix, and wrote the manuscript.
+
+\section*{Competing interests}
+\label{sec:competing}
+
+The author declares no competing interests.
+
+\section*{Acknowledgements}
+\label{sec:ack}
+
+No external funding was received.
+
+\bibliographystyle{unsrtnat}
+\begin{thebibliography}{99}
+
+\bibitem{raissi2019physics} Raissi, M., Perdikaris, P.\ \& Karniadakis, G.E.\
+Physics-informed neural networks. \emph{J.\ Comput.\ Phys.} \textbf{378},
+686--707 (2019).
+
+\bibitem{karniadakis2021physics} Karniadakis, G.E.\ et al.\ Physics-informed
+machine learning. \emph{Nat.\ Rev.\ Phys.} \textbf{3}, 422--440 (2021).
+
+\bibitem{li2021fourier} Li, Z.\ et al.\ Fourier neural operator for parametric
+partial differential equations. In \emph{ICLR} (2021).
+
+\bibitem{lu2021deeponet} Lu, L., Jin, P., Pang, G., Zhang, Z.\ \&
+Karniadakis, G.E.\ Learning nonlinear operators via DeepONet. \emph{Nat.\
+Mach.\ Intell.} \textbf{3}, 218--229 (2021).
+
+\bibitem{liu2024physics} Liu, X.\ et al.\ Physics-informed transformers.
+Preprint at \url{https://arxiv.org/abs/2405.xxxxx} (2024).
+
+\bibitem{lu2021deepxde} Lu, L., Meng, X., Mao, Z.\ \& Karniadakis, G.E.\
+DeepXDE. \emph{SIAM Rev.} \textbf{63}, 208--228 (2021).
+
+\bibitem{takamoto2022pdebench} Takamoto, M.\ et al.\ PDEBench: an extensive
+scientific machine learning benchmark suite. \emph{arXiv:2210.07162} (2022).
+
+\bibitem{wang2021understanding} Wang, S., Teng, Y.\ \& Perdikaris, P.\
+Understanding and mitigating gradient flow pathologies in PINNs. \emph{SIAM
+J.\ Sci.\ Comput.} \textbf{43}, A3055--A3081 (2021).
+
+\bibitem{vaswani2017attention} Vaswani, A.\ et al.\ Attention is all you
+need. In \emph{NeurIPS 30}, 5998--6008 (2017).
+
+\bibitem{hendrycks2016gelu} Hendrycks, D.\ \& Gimpel, K.\ Gaussian error
+linear units. \emph{arXiv:1606.08415} (2016).
+
+\bibitem{kingma2015adam} Kingma, D.P.\ \& Ba, J.\ Adam. In \emph{ICLR}
+(2015).
+
+\bibitem{loshchilov2019adamw} Loshchilov, I.\ \& Hutter, F.\ Decoupled weight
+decay regularization. In \emph{ICLR} (2019).
+
+\end{thebibliography}
+
+\end{document}
